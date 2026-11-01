@@ -1,0 +1,14 @@
+# Merge into the primary's shared ~/openpak/deploy/traefik/dynamic.yml. The gateway forwards
+# Live service 7 here; the other /xstats paths (services 34/35, settings) stay on x360-xuacs.
+http:
+  routers:
+    x360-xstats-lb-web:
+      entryPoints: [web]
+      rule: Path(`/xstats/statpost.ashx`) || Path(`/xstats/xstatread.ashx`) || Path(`/xstats/xstatenumbyrank.ashx`) || Path(`/xstats/xstatenumbyuser.ashx`) || Path(`/xstats/xstatenumbyrating.ashx`) || Path(`/xstats/xstatestimaterankforratings.ashx`) || Path(`/xstats/xstatsreset.ashx`)
+      priority: 60
+      service: x360-xstats-lb-http
+  services:
+    x360-xstats-lb-http:
+      loadBalancer:
+        servers:
+        - url: http://openpak-x360-xstats:10007
