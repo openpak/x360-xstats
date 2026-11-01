@@ -175,6 +175,10 @@ type Handler struct {
 	Store *Store
 	Names Names // optional
 	Log   *slog.Logger
+	// Profile settings (service 34, settings.go): the account core and the
+	// XUID-to-account map; settings answer 503 without Profiles.
+	Profiles Profiles
+	Accounts Accounts
 }
 
 func (h *Handler) log() *slog.Logger {
@@ -227,6 +231,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/xstats/xstatsreset.ashx":
 		err = h.reset(r, body)
 	default:
+		if h.profileSettings(w, r, body) || h.xstats(w, r, body) {
+			return
+		}
 		h.log().Info("unhandled", "path", r.URL.Path, "body", hex.EncodeToString(body))
 		http.NotFound(w, r)
 		return

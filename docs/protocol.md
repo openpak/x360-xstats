@@ -49,3 +49,18 @@ then views as above.
 ## 0x706 reset
 
 `u32 title`, `u64 xuid`, `u32 view`. No reply.
+
+## Profile settings, services 34 and 35 (moved from x360-xuacs)
+
+`readsettings.ashx` (0x711): `u32 flags, u64 caller, u16 n, n x u64 target, u16 m, m x u32 setting id`. Reply
+`u16 count`, count x `{u32 source (1), u64 xuid, u32 id, u16 byte length, UTF-16LE value with NUL}`. Targets
+the caller may not discover (account core) are left out. Served ids: name 0x41040040 (display name), location
+0x40520041 (country), bio 0x43E80043, motto 0x402C0011.
+
+`syncsettings.ashx` (0x710): `u32 title, u64 caller, u64 sync version, u16 start, u16 n`, n entries as above.
+Uploads apply only when the console's version is current (or 0); the reply is `u64 version, u16 0, u16 n` and
+all four values when the console was not current. The version is the core's profile version, so a website
+edit reaches the console and a stale console cannot overwrite it.
+
+The other 0x707-0x716 requests (title, achievement and avatar sync and enumeration) get empty answers: every
+count 0.

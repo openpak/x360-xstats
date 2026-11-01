@@ -13,6 +13,7 @@ import (
 
 	"github.com/openpak/x360-common/accountcore"
 	"github.com/openpak/x360-common/wire"
+	"github.com/openpak/x360-common/xuacsapi"
 	"github.com/openpak/x360-xstats/internal/xstats"
 )
 
@@ -35,7 +36,11 @@ func main() {
 			log.Error("account core", "err", err)
 			os.Exit(2)
 		}
-		h.Names = core
+		h.Names, h.Profiles = core, core
+	}
+	// Profile settings look up other players' accounts by online XUID in x360-xuacs.
+	if u := os.Getenv("X360_XUACS_INTERNAL_URL"); u != "" {
+		h.Accounts = &xuacsapi.Client{URL: u, Key: os.Getenv("X360_XUACS_INTERNAL_KEY")}
 	}
 	srv := &http.Server{Addr: addr, Handler: wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -46,7 +51,7 @@ func main() {
 		defer cancel()
 		srv.Shutdown(sc)
 	}()
-	log.Info("x360-xstats listening", "addr", addr, "views", len(store.Views), "gamertags", h.Names != nil)
+	log.Info("x360-xstats listening", "addr", addr, "views", len(store.Views), "gamertags", h.Names != nil, "xuacs", h.Accounts != nil)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("serve", "err", err)
 		os.Exit(1)

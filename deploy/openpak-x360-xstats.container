@@ -15,6 +15,7 @@ Environment=X360_XSTATS_STATE=/var/lib/x360-xstats/stats.json
 EnvironmentFile=%h/openpak/deploy/x360-gateway-key.env
 # X360_XSTATS_ACCOUNT_CORE_URL / X360_XSTATS_ACCOUNT_CORE_TOKEN (gamertags), mode 0600, never committed.
 EnvironmentFile=%h/openpak/deploy/x360-xstats/core.env
+EnvironmentFile=%h/openpak/deploy/x360-xuacs-internal.env
 Volume=%h/openpak/deploy/x360-xstats/state:/var/lib/x360-xstats:rw,Z
 ReadOnly=true
 DropCapability=ALL
