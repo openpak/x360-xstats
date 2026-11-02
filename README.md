@@ -37,6 +37,11 @@ website shows on the console and the other way round.
 Not served yet: skill (TrueSkill) updates, procs 0x800D/0x800E. Skill reads then find no row and
 XAM uses its default skill.
 
+Rankings contract: set `RANKINGS_ADDR` (for example `:9090`) to serve `/internal/rankings/boards` and
+`/boards/{id}` on the container network; empty means off. One board per title and view (`<title id in
+decimal>-<view>`), best rating first; rows carry `pid`, the player's XUID in decimal, network `x360`.
+The store keeps no write times, so `updated_at` is the zero time.
+
 State is one JSON file (`X360_XSTATS_STATE`). Gamertags come from the account core when
 `X360_XSTATS_ACCOUNT_CORE_URL` / `_TOKEN` are set; profile settings need them too, and
 `X360_XUACS_INTERNAL_URL` / `_KEY` to read other players' settings.

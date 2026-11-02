@@ -14,6 +14,7 @@ import (
 	"github.com/openpak/x360-common/accountcore"
 	"github.com/openpak/x360-common/wire"
 	"github.com/openpak/x360-common/xuacsapi"
+	"github.com/openpak/x360-xstats/internal/rankingsapi"
 	"github.com/openpak/x360-xstats/internal/xstats"
 )
 
@@ -42,6 +43,7 @@ func main() {
 	if u := os.Getenv("X360_XUACS_INTERNAL_URL"); u != "" {
 		h.Accounts = &xuacsapi.Client{URL: u, Key: os.Getenv("X360_XUACS_INTERNAL_KEY")}
 	}
+	rankingsapi.Serve(os.Getenv("RANKINGS_ADDR"), "x360", xstats.Rankings{Store: store})
 	srv := &http.Server{Addr: addr, Handler: wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
