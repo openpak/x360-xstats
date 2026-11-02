@@ -30,7 +30,7 @@ settings (34) and titles/achievements/avatars (35).
 
 No per-title configuration: XAM reads the title's own stats views and sends one write per
 column aggregation with the column ids, so the server stores columns and ranks rows by the
-rating column (0xFFFE). Services 34 and 35 moved here from x360-xuacs on 2026-11-01 (one repository
+rating column (0xFFFE). Services 34 and 35 moved here from x360-xuacs (one repository
 for the firmware's `xstats` front end); their settings come from the account core, so an edit on the
 website shows on the console and the other way round.
 
