@@ -65,10 +65,11 @@ func (r *Row) rating() int64 { return r.Cols[colRating].Int() }
 // ponytail: whole-file rewrite and a sort per read; move to a database when
 // leaderboards get large.
 type Store struct {
-	mu    sync.Mutex
-	path  string
-	Views map[string]map[string]*Row `json:"views"` // "TTTTTTTT/view" -> xuid hex -> row
-	Next  uint64                     `json:"next"`
+	mu       sync.Mutex
+	path     string
+	Views    map[string]map[string]*Row `json:"views"` // "TTTTTTTT/view" -> xuid hex -> row
+	Next     uint64                     `json:"next"`
+	Profiles map[string]*Profile        `json:"profiles,omitempty"` // xuid hex -> synced titles, achievements, awards (sync.go)
 }
 
 // Open loads path (empty: memory only).

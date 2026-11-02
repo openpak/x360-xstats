@@ -62,8 +62,28 @@ Uploads apply only when the console's version is current (or 0); the reply is `u
 all four values when the console was not current. The version is the core's profile version, so a website
 edit reaches the console and a stale console cannot overwrite it.
 
-The other 0x707-0x716 requests (title, achievement and avatar sync and enumeration) get empty answers: every
-count 0.
+## Title, achievement and avatar sync, service 35 (sync.go)
+
+All little-endian, no envelope. Every caller XUID must be on the gateway's users header (else 403). State is
+per XUID in the JSON state file (`profiles`). Each list (titles; achievements per title; awards per title) has a
+monotonic u64 version; every accepted change takes the next value as its revision, a re-upload of an unchanged
+row changes nothing. 0 means never synced. Full layouts and the XAM addresses: Wharf note `re-xstats-sync.md`.
+
+- `synctitles` 0x707: `u64 xuid, u16, u16, u64 version, u16 n (<=32)`, n title records. Reply `u64 version,
+  u16 0, u16 n`, title records changed since `version` and not uploaded in this request (at most 32; a cut
+  reply reports the last returned revision). Title record: `u32 id, u16 nameLen, name, u64 lastPlayed, u32 gs,
+  u16 achUnlocked, u16 achTotal, u32 gsTotal, u32 stamp, u32 0`. Merge: union by id, larger values win.
+- `enumtitles` 0x708: `u64 xuid, u64 target, u16, u16 start, u16 max`; reply `u16 n`, records by id (256 per
+  page). A target not on the ticket answers empty.
+- `cleartitle` 0x709: `u64 xuid, u32 id`; drops the title, achievements and awards. No body.
+- `syncachievements` 0x70a / `syncavatarassets` 0x713: `u32 title, u64 xuid, u64 version, u16, u16 start,
+  u16 n`, records; reply as 0x707 with achievement/award records. A non-zero count makes the console run the
+  full enumerate. The console-local pending-upload flag (0x100000) is not stored. Strings, image ids and
+  gamerscore are stored only as uploaded (empty from the console); the catalogue comes later from x360-progress.
+- `xachievementenum` 0x70b / `xavatarassetenum` 0x714: `u32 title, u64 xuid, u64 target, u16, u16 start,
+  u16 max (<=200)`; reply `u16 n`, records by id.
+- `uploadconsoleauditlist` 0x715: accepted and logged, nothing stored. No body.
+- `validateavatarmanifest` 0x716: one zero byte.
 
 ## Derivation
 

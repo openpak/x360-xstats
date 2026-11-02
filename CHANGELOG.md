@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0
+
+- Services 34/35 title, achievement and avatar-award sync (0x707-0x70b, 0x713-0x716) is real: per-profile
+  stores in the JSON state with monotonic list versions, delta replies, paged enumerates. 0x715 is logged
+  only, 0x716 keeps its 1-byte reply. Catalogue strings stay empty until x360-progress.
+
 ## v0.3.0
 
 - Rankings contract (`/internal/rankings/boards`, `/boards/{id}`) over the stored leaderboard views,

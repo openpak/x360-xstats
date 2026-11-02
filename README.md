@@ -25,7 +25,7 @@ settings (34) and titles/achievements/avatars (35).
 | `POST /xstats/xstatsreset.ashx` | 0x706 | Clear a signed-in user's row |
 | `POST /xstats/readsettings.ashx` | 0x711 | Profile settings (name, location, bio, motto) of users the caller may see |
 | `POST /xstats/syncsettings.ashx` | 0x710 | Sync the caller's profile settings with the account core |
-| `POST /xstats/synctitles.ashx`, `enumtitles`, `syncachievements`, `xachievementenum`, ... | 0x707-0x716 | Service 35 and the rest of 34: empty answers |
+| `POST /xstats/synctitles.ashx`, `enumtitles`, `syncachievements`, `xachievementenum`, ... | 0x707-0x716 | Service 35 and the rest of 34: persistent per-profile title, achievement and avatar-award sync |
 | `GET /healthz` | | Health probe |
 
 No per-title configuration: XAM reads the title's own stats views and sends one write per
