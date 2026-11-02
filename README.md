@@ -50,7 +50,6 @@ GOWORK=off go run -mod=vendor ./cmd/x360-xstats
 ## Docs
 
 - [Protocol](docs/protocol.md)
-- [Evidence](docs/evidence.md)
 - [Deploy](docs/deploy.md)
 
 ## Licence

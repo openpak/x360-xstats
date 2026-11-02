@@ -64,3 +64,7 @@ edit reaches the console and a stale console cannot overwrite it.
 
 The other 0x707-0x716 requests (title, achievement and avatar sync and enumeration) get empty answers: every
 count 0.
+
+## Derivation
+
+Schemas of 0x703-0x706 and 0x70D-0x70F were dumped from the 17559 XRL table. Write procs were traced through XAM (`FUN_8191ae78` -> `FUN_81922de8` -> `FUN_819223b0` -> `FUN_8182df50`), read conversion through `FUN_81922140`. Bodies built by the tests decode field for field under the XAM codec model (requests 0x705/0x703, replies 0x703/0x70E).
