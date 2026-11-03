@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.0
+
+- Rankings per title: `/t/<title>/internal/rankings/...` on `RANKINGS_ADDR` serves only that title's boards
+  (8 characters = hex title id such as `4D5307E6`, anything else = the decimal id of the board ids), so the
+  website maps one catalogue title to one URL. The unscoped `/internal/rankings/` is unchanged.
+
 ## v0.4.0
 
 - Services 34/35 title, achievement and avatar-award sync (0x707-0x70b, 0x713-0x716) is real: per-profile
