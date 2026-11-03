@@ -188,14 +188,11 @@ func TestAuditAndRefusal(t *testing.T) {
 }
 
 func TestSyncPersists(t *testing.T) {
-	path := t.TempDir() + "/s.json"
-	s, _ := Open(path)
+	path := pgSchema(t)
+	s := testOpen(t, path)
 	h := &Handler{Store: s}
 	syncPost(t, h, "/xstats/syncachievements.ashx", itemBody(1, 0, false, 5))
-	s2, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s2 := testOpen(t, path)
 	if got := s2.Profiles[me].Ach[1].Items[5]; got == nil || got.Rev != 1 {
 		t.Fatalf("not persisted: %+v", s2.Profiles)
 	}

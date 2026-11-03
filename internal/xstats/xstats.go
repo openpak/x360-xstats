@@ -21,7 +21,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/openpak/x360-common/pgstate"
 	"github.com/openpak/x360-common/wire"
 )
 
@@ -61,32 +63,55 @@ type Row struct {
 
 func (r *Row) rating() int64 { return r.Cols[colRating].Int() }
 
-// Store keeps every view in memory and rewrites one JSON file after each change.
-// ponytail: whole-file rewrite and a sort per read; move to a database when
+// Store keeps every view in memory and writes the whole state as one document to
+// Postgres (schema x360_xstats) after each change; a nil pg is memory only (tests).
+// ponytail: whole-document rewrite and a sort per read; split per view when
 // leaderboards get large.
 type Store struct {
 	mu       sync.Mutex
-	path     string
+	pg       *pgstate.Store
 	Views    map[string]map[string]*Row `json:"views"` // "TTTTTTTT/view" -> xuid hex -> row
 	Next     uint64                     `json:"next"`
 	Profiles map[string]*Profile        `json:"profiles,omitempty"` // xuid hex -> synced titles, achievements, awards (sync.go)
 }
 
-// Open loads path (empty: memory only).
-func Open(path string) (*Store, error) {
-	s := &Store{path: path, Views: map[string]map[string]*Row{}}
-	if path == "" {
-		return s, nil
-	}
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
+// Schema is the Postgres schema xstats owns inside the x360 database.
+const (
+	Schema   = "x360_xstats"
+	stateKey = "state"
+)
+
+// NewMemoryStore is a store that forgets on exit (tests).
+func NewMemoryStore() *Store { return &Store{Views: map[string]map[string]*Row{}} }
+
+// Open opens the Postgres store in schema. When the database holds no state yet
+// and legacyFile exists, it is imported once and left in place. An empty dsn is
+// an error.
+func Open(ctx context.Context, dsn, schema, legacyFile string) (*Store, error) {
+	pg, err := pgstate.Open(ctx, dsn, schema)
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, s); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	s := NewMemoryStore()
+	s.pg = pg
+	found, err := pg.Load(ctx, stateKey, s)
+	if err == nil && !found && legacyFile != "" {
+		b, rerr := os.ReadFile(legacyFile)
+		switch {
+		case rerr == nil:
+			if err = json.Unmarshal(b, s); err == nil {
+				err = s.saveLocked()
+			}
+			if err == nil {
+				slog.Info("imported stats.json into Postgres", "views", len(s.Views), "profiles", len(s.Profiles))
+			}
+		case !os.IsNotExist(rerr):
+			err = rerr
+		}
+	}
+	if err != nil {
+		pg.Close()
+		return nil, err
 	}
 	if s.Views == nil {
 		s.Views = map[string]map[string]*Row{}
@@ -94,19 +119,20 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+// Close releases the database pool.
+func (s *Store) Close() {
+	if s.pg != nil {
+		s.pg.Close()
+	}
+}
+
 func (s *Store) saveLocked() error {
-	if s.path == "" {
+	if s.pg == nil {
 		return nil
 	}
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	tmp := s.path + ".new"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.pg.Save(ctx, stateKey, s)
 }
 
 func viewKey(title, view uint32) string { return fmt.Sprintf("%08X/%d", title, view) }

@@ -42,7 +42,7 @@ Rankings contract: set `RANKINGS_ADDR` (for example `:9090`) to serve `/internal
 decimal>-<view>`), best rating first; rows carry `pid`, the player's XUID in decimal, network `x360`.
 The store keeps no write times, so `updated_at` is the zero time.
 
-State is one JSON file (`X360_XSTATS_STATE`). Gamertags come from the account core when
+State is one document in Postgres (`X360_XSTATS_DATABASE_URL`, schema `x360_xstats`; `X360_XSTATS_STATE` is only the old stats.json, imported once). Gamertags come from the account core when
 `X360_XSTATS_ACCOUNT_CORE_URL` / `_TOKEN` are set; profile settings need them too, and
 `X360_XUACS_INTERNAL_URL` / `_KEY` to read other players' settings.
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/openpak/x360-common/wire"
@@ -85,8 +84,8 @@ func i64(v int64) Value { return Value{tInt64, uint64(v)} }
 func i32(v int32) Value { return Value{tInt32, uint64(uint32(v))} }
 
 func TestLeaderboard(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "stats.json")
-	s, _ := Open(state)
+	state := pgSchema(t)
+	s := testOpen(t, state)
 	h := &Handler{Store: s, Names: names{"acc-a": "Alpha", "acc-b": "Bravo"}}
 	const a, b = 0x0009000000000001, 0x0009000000000002
 	users := "0009000000000001:acc-a,0009000000000002:acc-b"
@@ -142,8 +141,8 @@ func TestLeaderboard(t *testing.T) {
 	}
 
 	// reload from disk, then reset b (signed in) and refuse a foreign XUID
-	s2, err := Open(state)
-	if err != nil || len(s2.Views[viewKey(title, 1)]) != 2 {
+	s2 := testOpen(t, state)
+	if err := error(nil); err != nil || len(s2.Views[viewKey(title, 1)]) != 2 {
 		t.Fatalf("reload: %v %v", err, s2.Views)
 	}
 	h.Store = s2

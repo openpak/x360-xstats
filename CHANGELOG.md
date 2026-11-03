@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.6.0 (2026-11-03)
+
+- State moves to Postgres (schema `x360_xstats` in database `x360`, `X360_XSTATS_DATABASE_URL`, required: the service
+  refuses to start without it). An existing `stats.json` (`X360_XSTATS_STATE`) is imported once on first start and left in place.
+
 ## v0.5.0
 
 - Rankings per title: `/t/<title>/internal/rankings/...` on `RANKINGS_ADDR` serves only that title's boards

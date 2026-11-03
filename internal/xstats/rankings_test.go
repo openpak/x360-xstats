@@ -10,7 +10,7 @@ import (
 )
 
 func rankedStore() *Store {
-	s, _ := Open("")
+	s := NewMemoryStore()
 	rate := func(n int64) map[uint16]Value { return map[uint16]Value{colRating: {Type: tInt64, Bits: uint64(n)}} }
 	s.Views[viewKey(title, 2)] = map[string]*Row{
 		xuidKey(0xE000000000000001): {Cols: rate(500), Seq: 1},

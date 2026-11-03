@@ -23,11 +23,17 @@ func main() {
 	if addr == "" {
 		addr = ":10007"
 	}
-	store, err := xstats.Open(os.Getenv("X360_XSTATS_STATE")) // e.g. /var/lib/x360-xstats/stats.json
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// X360_XSTATS_STATE is only the old stats.json, imported once when the database is empty.
+	legacy := os.Getenv("X360_XSTATS_STATE")
+	store, err := xstats.Open(dbCtx, os.Getenv("X360_XSTATS_DATABASE_URL"), xstats.Schema, legacy)
+	dbCancel()
 	if err != nil {
-		log.Error("state (X360_XSTATS_STATE)", "err", err)
+		log.Error("state: X360_XSTATS_DATABASE_URL is required and must be reachable", "err", err)
 		os.Exit(2)
 	}
+	defer store.Close()
+	log.Info("state in Postgres", "schema", xstats.Schema)
 	h := &xstats.Handler{Store: store, Log: log}
 	// Gamertags for leaderboard rows come from the account core (the account handle).
 	if u := os.Getenv("X360_XSTATS_ACCOUNT_CORE_URL"); u != "" {
