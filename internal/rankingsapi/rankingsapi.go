@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/openpak/x360-common/httplog"
 )
 
 // Board kinds and sort orders.
@@ -153,7 +155,7 @@ func Serve(addr, network string, src Source) {
 		return
 	}
 	go func() {
-		srv := &http.Server{Addr: addr, Handler: Handler(network, src), ReadHeaderTimeout: 5 * time.Second}
+		srv := &http.Server{Addr: addr, Handler: httplog.Wrap(Handler(network, src)), ReadHeaderTimeout: 5 * time.Second}
 		if err := srv.ListenAndServe(); err != nil {
 			log.Printf("rankings: %v", err)
 		}

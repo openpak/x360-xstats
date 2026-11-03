@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/openpak/x360-common/accountcore"
+	"github.com/openpak/x360-common/httplog"
 	"github.com/openpak/x360-common/wire"
 	"github.com/openpak/x360-common/xuacsapi"
 	"github.com/openpak/x360-xstats/internal/xstats"
@@ -50,13 +51,13 @@ func main() {
 	}
 	if ra := os.Getenv("RANKINGS_ADDR"); ra != "" {
 		go func() {
-			rs := &http.Server{Addr: ra, Handler: xstats.RankingsHandler("x360", store), ReadHeaderTimeout: 5 * time.Second}
+			rs := &http.Server{Addr: ra, Handler: httplog.Wrap(xstats.RankingsHandler("x360", store)), ReadHeaderTimeout: 5 * time.Second}
 			if err := rs.ListenAndServe(); err != nil {
 				log.Error("rankings", "err", err)
 			}
 		}()
 	}
-	srv := &http.Server{Addr: addr, Handler: wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: httplog.Wrap(wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h)), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
