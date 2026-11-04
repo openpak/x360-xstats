@@ -1,10 +1,14 @@
 # Changelog
 
+## v0.7.1 (2026-11-04)
+
+- Docs only: the core serves a Xbox 360 title at `/t/x360:<title id>` (not `/n/x360/t/...`, which takes a neutral key).
+
 ## v0.7.0 (2026-11-04)
 
 - Leaderboard rows move into the neutral leaderboards core (gRPC, `X360_XSTATS_LEADERBOARDS_ADDR` / `_KEY`, required): a view is a board,
   a player's row the entry of the player's account, the rating column the score column, columns merged by the core. The in-process
-  store, the `rankingsapi` copy and `RANKINGS_ADDR` are gone; the website reads `/n/x360/t/<title id>` from the core.
+  store, the `rankingsapi` copy and `RANKINGS_ADDR` are gone; the website reads `/t/x360:<title id>` from the core.
 - One-time, idempotent migration of the old rows into the core at start (rows without an account stay in the Postgres document; the document keeps the old rows).
 - Reads need x360-xuacs to turn accounts back into XUIDs. A core outage answers 503.
 - Logging: no more request bodies or user lists in the log; the request line (method, path, status, ms) comes from httplog.

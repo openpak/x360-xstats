@@ -42,7 +42,7 @@ adapter guide "Xbox 360"): a view is the board `x360` / title id (8 hex digits) 
 entry of the player's account, the rating column (0xFFFE) is the board's `score_column`, and each posted column is
 declared with its aggregation (`sum`, `min`, `max`, `latest`) so the core merges them. A column is stored as
 `<id>.<wire type>` (a double as fixed point, millionths). The core serves the website rankings contract
-(`/n/x360/t/<title id>`); this service no longer has a rankings listener. XUIDs and accounts are mapped through
+(`/t/x360:<title id>`, the unmapped title key); this service no longer has a rankings listener. XUIDs and accounts are mapped through
 x360-xuacs; the gamertag is the entry's display name. Env: `X360_XSTATS_LEADERBOARDS_ADDR`
 (`openpak-leaderboards:20211`) and `X360_XSTATS_LEADERBOARDS_KEY`, both required.
 
