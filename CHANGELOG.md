@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.9.0 (2026-11-04)
+
+- Account erasure (card #120). `DELETE /internal/accounts/{account_id}/data` with `Authorization: Bearer $ACCOUNT_ERASE_KEY` on a separate listener `ERASE_ADDR` (default `:9099`, container network only, never published; not served while the key is unset). Reply `{"service":"x360-xstats","rows":N}`; one `account erased` log line per erasure. Deletes the account's synced profile (titles, achievements, awards) and any legacy leaderboard rows kept in the `state` document, by XUID (from x360-xuacs, existing `X360_XUACS_INTERNAL_URL`). The live leaderboard rows are in the leaderboards core and are erased by its own step.
+
 ## v0.8.0 (2026-11-04)
 
 - Authorization (#101): a statpost may only write XUIDs signed in on the caller's tunnel, or the participants x360-xarb vouches for on an arbitrated result (`X-X360-Arb-Users` with `X-X360-Arb-Key` = `X360_XSTATS_ARB_KEY`). Any other XUID refuses the whole post with 403 before anything is written. Without the key configured only the caller's own XUIDs are accepted.

@@ -102,3 +102,19 @@ func TestMigrationSurvivesRestart(t *testing.T) {
 		t.Fatalf("second run: %v %+v", err, st)
 	}
 }
+
+func TestEraseRemovesProfileAndLegacyRowsOfThoseXUIDsOnly(t *testing.T) {
+	s := NewMemoryStore()
+	const a, b = 0x0009000000000001, 0x0009000000000002
+	s.Profiles = map[string]*Profile{xuidKey(a): {}, xuidKey(b): {}}
+	s.Views["0000FFFE/1"] = map[string]*Row{xuidKey(a): {Gamertag: "A"}, xuidKey(b): {Gamertag: "B"}}
+	if n, err := s.Erase([]uint64{a}); err != nil || n != 2 {
+		t.Fatalf("erase: %d %v", n, err)
+	}
+	if n, err := s.Erase([]uint64{a}); err != nil || n != 0 {
+		t.Fatalf("second erase: %d %v", n, err)
+	}
+	if s.Profiles[xuidKey(b)] == nil || s.Views["0000FFFE/1"][xuidKey(b)] == nil || len(s.Profiles) != 1 || len(s.Views["0000FFFE/1"]) != 1 {
+		t.Fatal("wrong records erased")
+	}
+}

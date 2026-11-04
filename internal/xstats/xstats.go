@@ -598,3 +598,29 @@ func (h *Handler) reset(r *http.Request, body []byte) error {
 	}
 	return h.resetBoards(r.Context(), title, view, acct)
 }
+
+// Erase removes the synced profile and any legacy leaderboard rows of xuids and
+// returns how many records that was. The live leaderboard rows are in the
+// leaderboards core and are erased there. Idempotent.
+func (s *Store) Erase(xuids []uint64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, x := range xuids {
+		k := xuidKey(x)
+		if s.Profiles[k] != nil {
+			delete(s.Profiles, k)
+			n++
+		}
+		for _, rows := range s.Views {
+			if _, ok := rows[k]; ok {
+				delete(rows, k)
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	return n, s.saveLocked()
+}
