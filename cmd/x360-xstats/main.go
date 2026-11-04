@@ -35,7 +35,7 @@ func main() {
 	}
 	defer store.Close()
 	log.Info("state in Postgres", "schema", xstats.Schema)
-	h := &xstats.Handler{Store: store, Log: log}
+	h := &xstats.Handler{Store: store, Log: log, ArbKey: os.Getenv("X360_XSTATS_ARB_KEY")}
 	// Gamertags for leaderboard rows come from the account core (the account handle).
 	if u := os.Getenv("X360_XSTATS_ACCOUNT_CORE_URL"); u != "" {
 		core, err := accountcore.New(u, os.Getenv("X360_XSTATS_ACCOUNT_CORE_TOKEN"), nil)

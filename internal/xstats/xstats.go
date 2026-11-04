@@ -11,6 +11,7 @@ package xstats
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,10 @@ type Handler struct {
 	Profiles Profiles
 	Accounts Accounts
 
+	// ArbKey is the secret x360-xarb sends with an arbitrated result's participants; empty
+	// means only the caller's own XUIDs may be written.
+	ArbKey string
+
 	board boardState
 	ids   idCache
 }
@@ -257,8 +262,10 @@ func (e upstreamErr) Unwrap() error { return e.err }
 // post is XRL 0x705: u32 title, u16 n, n x {u16 proc, u16 m, m x value}. A column
 // proc's params are XUID (7), view (3), u16 0, then (u16 column, value) pairs
 // (FUN_81935f70, FUN_819223b0).
-// ponytail: any console may write any XUID's row, as Live let a session host
-// write its players' stats; arbitration checks would go here.
+//
+// A write may only target an XUID signed in on the caller's tunnel, or one of the participants
+// x360-xarb vouches for on an arbitrated result (ArbKey, arbUsers). Any other XUID refuses the
+// whole post (403) before anything is written.
 func (h *Handler) post(r *http.Request, body []byte) error {
 	rd := &reader{b: body}
 	title := rd.u32()
@@ -292,7 +299,39 @@ func (h *Handler) post(r *http.Request, body []byte) error {
 	if rd.err != nil {
 		return rd.err
 	}
-	return h.writeStats(r.Context(), title, signedIn(r), writes)
+	users := signedIn(r)
+	extra := h.arbUsers(r)
+	for _, wr := range writes {
+		if _, ok := users[wr.xuid]; !ok && !extra[wr.xuid] {
+			h.log().Warn("statpost refused: XUID is not the caller's or an arbitrated participant", "title", titleKey(title))
+			return errNotYours
+		}
+	}
+	return h.writeStats(r.Context(), title, users, writes)
+}
+
+// Headers x360-xarb adds to a forwarded result report: the participants of the arbitrated
+// session (hex XUIDs, comma separated), honoured only with the shared ArbKey.
+const (
+	ArbKeyHeader   = "X-X360-Arb-Key"
+	ArbUsersHeader = "X-X360-Arb-Users"
+)
+
+// arbUsers is the set of XUIDs the request may write besides the caller's own: empty unless
+// ArbKey is configured and the request carries it.
+func (h *Handler) arbUsers(r *http.Request) map[uint64]bool {
+	got := r.Header.Get(ArbKeyHeader)
+	r.Header.Del(ArbKeyHeader)
+	if h.ArbKey == "" || subtle.ConstantTimeCompare([]byte(got), []byte(h.ArbKey)) != 1 {
+		return nil
+	}
+	out := map[uint64]bool{}
+	for _, x := range strings.Split(r.Header.Get(ArbUsersHeader), ",") {
+		if v, err := strconv.ParseUint(strings.TrimSpace(x), 16, 64); err == nil {
+			out[v] = true
+		}
+	}
+	return out
 }
 
 type spec struct {

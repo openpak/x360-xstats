@@ -259,3 +259,57 @@ func TestMigrateLegacy(t *testing.T) {
 	}
 	_ = pb.Entry{}
 }
+
+// post sends a statpost with optional extra headers and returns the status.
+func post(h *Handler, users string, hdr map[string]string, body []byte) int {
+	req := httptest.NewRequest("POST", "/xstats/statpost.ashx", bytes.NewReader(body))
+	req.Header.Set(wire.AccountHeader, "console@xbox.com")
+	req.Header.Set(wire.UsersHeader, users)
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+func TestWriteAuthorization(t *testing.T) {
+	const a, b = 0x0009000000000001, 0x0009000000000002
+	f := fakeleaderboards.New(lbKey)
+	h := newHandler(t, f, NewMemoryStore())
+	h.ArbKey = "arb-secret"
+	own := func(x uint64) []byte {
+		return statpost(func(w *writer) { proc(w, procLast, x, 1, colRating, i64(10)) }, 1)
+	}
+	if c := post(h, "0009000000000001:acc-a", nil, own(a)); c != 200 {
+		t.Fatalf("own XUID: %d", c)
+	}
+	if c := post(h, "0009000000000001:acc-a", nil, own(b)); c != 403 {
+		t.Fatalf("other XUID: %d", c)
+	}
+	// a mixed post is refused whole
+	mixed := statpost(func(w *writer) {
+		proc(w, procLast, a, 1, colRating, i64(10))
+		proc(w, procLast, b, 1, colRating, i64(10))
+	}, 2)
+	if c := post(h, "0009000000000001:acc-a", nil, mixed); c != 403 {
+		t.Fatalf("mixed post: %d", c)
+	}
+	// xarb result: participants a and b, key correct
+	arb := map[string]string{ArbKeyHeader: "arb-secret", ArbUsersHeader: "0009000000000001,0009000000000002"}
+	if c := post(h, "0009000000000001:acc-a", arb, own(b)); c != 200 {
+		t.Fatalf("participant: %d", c)
+	}
+	// a non-participant (c) is refused even with the key; participants without the key are ignored
+	if c := post(h, "0009000000000001:acc-a", arb, own(0x0009000000000003)); c != 403 {
+		t.Fatalf("non-participant: %d", c)
+	}
+	bad := map[string]string{ArbKeyHeader: "wrong", ArbUsersHeader: arb[ArbUsersHeader]}
+	if c := post(h, "0009000000000001:acc-a", bad, own(b)); c != 403 {
+		t.Fatalf("participants with a wrong key: %d", c)
+	}
+	h.ArbKey = ""
+	if c := post(h, "0009000000000001:acc-a", arb, own(b)); c != 403 {
+		t.Fatalf("arb headers with no key configured: %d", c)
+	}
+}

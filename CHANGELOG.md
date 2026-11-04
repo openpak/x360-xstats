@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.8.0 (2026-11-04)
+
+- Authorization (#101): a statpost may only write XUIDs signed in on the caller's tunnel, or the participants x360-xarb vouches for on an arbitrated result (`X-X360-Arb-Users` with `X-X360-Arb-Key` = `X360_XSTATS_ARB_KEY`). Any other XUID refuses the whole post with 403 before anything is written. Without the key configured only the caller's own XUIDs are accepted.
+- Tests: own XUID, other XUID, mixed post, participant, non-participant, wrong key, no key configured.
+
 ## v0.7.1 (2026-11-04)
 
 - Docs only: the core serves a Xbox 360 title at `/t/x360:<title id>` (not `/n/x360/t/...`, which takes a neutral key).
