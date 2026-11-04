@@ -37,9 +37,10 @@ type Profiles interface {
 	CanDiscover(context.Context, string, string) (bool, error)
 }
 
-// Accounts maps online XUIDs to accounts (x360-xuacs internal API).
+// Accounts maps online XUIDs to accounts and back (x360-xuacs internal API).
 type Accounts interface {
 	AccountByXUID(context.Context, uint64) (string, bool, error)
+	OnlineXUID(context.Context, string) (uint64, error)
 }
 
 type reqErr struct {

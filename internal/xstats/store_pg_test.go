@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/openpak/x360-common/pgstate"
+	"github.com/openpak/x360-xstats/internal/fakeleaderboards"
 )
 
 func testDSN(t *testing.T) string {
@@ -68,5 +69,36 @@ func TestLegacyFileImportedOnce(t *testing.T) {
 	s = testOpen(t, schema)
 	if len(s.Views["00000001/1"]) != 1 || s.Next != 2 {
 		t.Fatalf("not imported: %+v", s.Views)
+	}
+}
+
+// TestMigrationSurvivesRestart: after the rows move to the core, a restart (the store reopened
+// from Postgres) still holds the old rows, knows they are migrated, and migrates nothing again.
+func TestMigrationSurvivesRestart(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "stats.json")
+	js := `{"views":{"4D5307E6/1":{"0009000000000001":{"gamertag":"Alpha","cols":{"65534":{"t":4,"v":100}},"seq":1}}},"next":2}`
+	if err := os.WriteFile(file, []byte(js), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	schema := pgSchema(t)
+	s, err := Open(context.Background(), testDSN(t), schema, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := fakeleaderboards.New(lbKey)
+	h := newHandler(t, f, s)
+	st, err := h.MigrateLegacy(context.Background())
+	if err != nil || st.Migrated != 1 {
+		t.Fatalf("%v %+v", err, st)
+	}
+	s.Close()
+
+	s2 := testOpen(t, schema)
+	if !s2.Migrated || len(s2.Views["4D5307E6/1"]) != 1 {
+		t.Fatalf("after restart: migrated=%v views=%v", s2.Migrated, s2.Views)
+	}
+	st, err = newHandler(t, f, s2).MigrateLegacy(context.Background())
+	if err != nil || st.Rows != 0 {
+		t.Fatalf("second run: %v %+v", err, st)
 	}
 }

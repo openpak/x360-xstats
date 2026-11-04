@@ -3,6 +3,8 @@
 # gateway key.
 [Unit]
 Description=OpenPak Xbox 360 leaderboards (x360-xstats)
+Wants=openpak-leaderboards.service
+After=openpak-leaderboards.service
 
 [Container]
 ContainerName=openpak-x360-xstats
@@ -15,6 +17,8 @@ Environment=X360_XSTATS_STATE=/var/lib/x360-xstats/stats.json
 # db.env defines X360_XSTATS_DATABASE_URL (Postgres, schema x360_xstats; required), mode 0600, never committed.
 EnvironmentFile=%h/openpak/deploy/x360-xstats/db.env
 EnvironmentFile=%h/openpak/deploy/x360-gateway-key.env
+# X360_XSTATS_LEADERBOARDS_ADDR / X360_XSTATS_LEADERBOARDS_KEY (the leaderboards core; required), mode 0600, never committed.
+EnvironmentFile=%h/openpak/deploy/x360-xstats/lb.env
 # X360_XSTATS_ACCOUNT_CORE_URL / X360_XSTATS_ACCOUNT_CORE_TOKEN (gamertags), mode 0600, never committed.
 EnvironmentFile=%h/openpak/deploy/x360-xstats/core.env
 EnvironmentFile=%h/openpak/deploy/x360-xuacs-internal.env

@@ -7,7 +7,7 @@ settings (34) and titles/achievements/avatars (35).
 | --- | --- |
 | Network | Xbox 360 |
 | Role | Leaderboard writes, reads and enumeration (`XSessionWriteStats`, `XUserReadStats`, `XUserCreateStatsEnumeratorBy*`, `XUserEstimateRankForRating`, `XUserResetStatsView`) |
-| Depends on | [`x360-common`](https://github.com/openpak/x360-common) (shared Go library, vendored); the account core (gamertags, profile settings); [`x360-xuacs`](https://github.com/openpak/x360-xuacs) internal API (XUID to account) |
+| Depends on | [`x360-common`](https://github.com/openpak/x360-common) (shared Go library, vendored); the leaderboards core (gRPC, holds every row); the account core (gamertags, profile settings); [`x360-xuacs`](https://github.com/openpak/x360-xuacs) internal API (XUID to account and back) |
 | Image | `ghcr.io/openpak/x360-xstats` |
 | Used by | XAM through the security gateway |
 | Licence | AGPL-3.0-only |
@@ -37,14 +37,22 @@ website shows on the console and the other way round.
 Not served yet: skill (TrueSkill) updates, procs 0x800D/0x800E. Skill reads then find no row and
 XAM uses its default skill.
 
-Rankings contract: set `RANKINGS_ADDR` (for example `:9090`) to serve `/internal/rankings/boards` and
-`/boards/{id}` on the container network; empty means off. One board per title and view (`<title id in
-decimal>-<view>`), best rating first; rows carry `pid`, the player's XUID in decimal, network `x360`.
-The store keeps no write times, so `updated_at` is the zero time.
+Leaderboard rows live in the neutral leaderboards core ([`leaderboards`](https://github.com/openpak/leaderboards),
+adapter guide "Xbox 360"): a view is the board `x360` / title id (8 hex digits) / view id, a player's row is the
+entry of the player's account, the rating column (0xFFFE) is the board's `score_column`, and each posted column is
+declared with its aggregation (`sum`, `min`, `max`, `latest`) so the core merges them. A column is stored as
+`<id>.<wire type>` (a double as fixed point, millionths). The core serves the website rankings contract
+(`/n/x360/t/<title id>`); this service no longer has a rankings listener. XUIDs and accounts are mapped through
+x360-xuacs; the gamertag is the entry's display name. Env: `X360_XSTATS_LEADERBOARDS_ADDR`
+(`openpak-leaderboards:20211`) and `X360_XSTATS_LEADERBOARDS_KEY`, both required.
 
-State is one document in Postgres (`X360_XSTATS_DATABASE_URL`, schema `x360_xstats`; `X360_XSTATS_STATE` is only the old stats.json, imported once). Gamertags come from the account core when
+On start the rows of the old store (the `views` of the Postgres document, imported from `stats.json`) move into the
+core once; a row whose XUID has no account stays in the document, and the document keeps the old rows afterwards.
+
+What stays here: the profile documents of services 34 and 35 (one document in Postgres, `X360_XSTATS_DATABASE_URL`, schema `x360_xstats`;
+`X360_XSTATS_STATE` is only the old stats.json, imported once). Gamertags come from the account core when
 `X360_XSTATS_ACCOUNT_CORE_URL` / `_TOKEN` are set; profile settings need them too, and
-`X360_XUACS_INTERNAL_URL` / `_KEY` to read other players' settings.
+`X360_XUACS_INTERNAL_URL` / `_KEY` to read other players' settings and to turn core accounts back into XUIDs.
 
 ## Run
 

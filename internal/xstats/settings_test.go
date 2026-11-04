@@ -97,3 +97,12 @@ func (a accts) AccountByXUID(_ context.Context, x uint64) (string, bool, error) 
 	v, ok := a[x]
 	return v, ok, nil
 }
+
+func (a accts) OnlineXUID(_ context.Context, acct string) (uint64, error) {
+	for x, v := range a {
+		if v == acct {
+			return x, nil
+		}
+	}
+	return 0, nil
+}

@@ -5,23 +5,25 @@
 //
 // No per-title configuration is needed: XAM reads the title's own stats views
 // (its SPA) and sends one procedure per view column aggregation, with the
-// column ids, so the server only stores and ranks.
+// column ids, so the server only translates. The rows live in the neutral
+// leaderboards core (board.go); this package keeps the wire.
 package xstats
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	pb "github.com/openpak/x360-xstats/internal/leaderboardspb"
 
 	"github.com/openpak/x360-common/pgstate"
 	"github.com/openpak/x360-common/wire"
@@ -54,7 +56,8 @@ const (
 	maxColumns = 64
 )
 
-// Row is one user's row in a view.
+// Row is one user's row in a view as the pre-core store kept it. Only the one-time migration
+// into the leaderboards core reads these (migrate.go).
 type Row struct {
 	Gamertag string           `json:"gamertag,omitempty"`
 	Cols     map[uint16]Value `json:"cols"`
@@ -63,16 +66,17 @@ type Row struct {
 
 func (r *Row) rating() int64 { return r.Cols[colRating].Int() }
 
-// Store keeps every view in memory and writes the whole state as one document to
-// Postgres (schema x360_xstats) after each change; a nil pg is memory only (tests).
-// ponytail: whole-document rewrite and a sort per read; split per view when
-// leaderboards get large.
+// Store writes the profile documents (service 34/35 sync, sync.go) as one document to
+// Postgres (schema x360_xstats) after each change; a nil pg is memory only (tests). The
+// leaderboard rows are not here any more: they live in the leaderboards core. Views, Next
+// and Migrated are the old rows, kept in the document after their migration and never dropped.
 type Store struct {
 	mu       sync.Mutex
 	pg       *pgstate.Store
-	Views    map[string]map[string]*Row `json:"views"` // "TTTTTTTT/view" -> xuid hex -> row
-	Next     uint64                     `json:"next"`
-	Profiles map[string]*Profile        `json:"profiles,omitempty"` // xuid hex -> synced titles, achievements, awards (sync.go)
+	Views    map[string]map[string]*Row `json:"views,omitempty"` // legacy "TTTTTTTT/view" -> xuid hex -> row
+	Next     uint64                     `json:"next,omitempty"`
+	Migrated bool                       `json:"lb_migrated,omitempty"` // Views are in the core
+	Profiles map[string]*Profile        `json:"profiles,omitempty"`    // xuid hex -> synced titles, achievements, awards (sync.go)
 }
 
 // Schema is the Postgres schema xstats owns inside the x360 database.
@@ -138,59 +142,6 @@ func (s *Store) saveLocked() error {
 func viewKey(title, view uint32) string { return fmt.Sprintf("%08X/%d", title, view) }
 func xuidKey(x uint64) string           { return fmt.Sprintf("%016X", x) }
 
-type ranked struct {
-	xuid uint64
-	row  *Row
-}
-
-// sorted returns a view's rows, best rating first.
-func (s *Store) sorted(title, view uint32) []ranked {
-	var out []ranked
-	for k, r := range s.Views[viewKey(title, view)] {
-		x, _ := strconv.ParseUint(k, 16, 64)
-		out = append(out, ranked{x, r})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if a, b := out[i].row.rating(), out[j].row.rating(); a != b {
-			return a > b
-		}
-		return out[i].row.Seq < out[j].row.Seq
-	})
-	return out
-}
-
-func aggregate(proc uint16, old Value, have bool, v Value) Value {
-	if !have || proc == procLast || old.Type == tNull {
-		return v
-	}
-	if v.Type == tNull {
-		return old
-	}
-	float := old.isFloat() || v.isFloat()
-	f := func(x Value) float64 {
-		if x.isFloat() {
-			return x.float()
-		}
-		return float64(x.Int())
-	}
-	switch proc {
-	case procSum:
-		if float {
-			return floatValue(f(old) + f(v))
-		}
-		return Value{v.Type, uint64(old.Int() + v.Int())}
-	case procMin:
-		if (float && f(v) < f(old)) || (!float && v.Int() < old.Int()) {
-			return v
-		}
-	case procMax:
-		if (float && f(v) > f(old)) || (!float && v.Int() > old.Int()) {
-			return v
-		}
-	}
-	return old
-}
-
 // Names looks up a gamertag for an OpenPak account (the account core handle).
 type Names interface {
 	Handle(ctx context.Context, account string) (string, error)
@@ -202,10 +153,16 @@ type Handler struct {
 	Store *Store
 	Names Names // optional
 	Log   *slog.Logger
+	// LB is the leaderboards core (gRPC); the leaderboard requests answer 503 without it.
+	LB pb.LeaderboardsClient
 	// Profile settings (service 34, settings.go): the account core and the
-	// XUID-to-account map; settings answer 503 without Profiles.
+	// XUID-to-account map; settings answer 503 without Profiles. Leaderboard reads need
+	// Accounts to turn core accounts back into XUIDs.
 	Profiles Profiles
 	Accounts Accounts
+
+	board boardState
+	ids   idCache
 }
 
 func (h *Handler) log() *slog.Logger {
@@ -227,6 +184,8 @@ func signedIn(r *http.Request) map[uint64]string {
 	return out
 }
 
+// The request line (method, path, status, ms) is written by httplog around this handler. Bodies,
+// users and queries are never logged.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.ToLower(r.URL.Path)
 	if path == "/healthz" {
@@ -246,31 +205,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/xstats/statpost.ashx":
 		err = h.post(r, body)
 	case "/xstats/xstatread.ashx":
-		reply, err = h.read(body)
+		reply, err = h.read(r.Context(), body)
 	case "/xstats/xstatenumbyrank.ashx":
-		reply, err = h.enum(body, byRank)
+		reply, err = h.enum(r.Context(), body, byRank)
 	case "/xstats/xstatenumbyuser.ashx":
-		reply, err = h.enum(body, byUser)
+		reply, err = h.enum(r.Context(), body, byUser)
 	case "/xstats/xstatenumbyrating.ashx":
-		reply, err = h.enum(body, byRating)
+		reply, err = h.enum(r.Context(), body, byRating)
 	case "/xstats/xstatestimaterankforratings.ashx":
-		reply, err = h.estimate(body)
+		reply, err = h.estimate(r.Context(), body)
 	case "/xstats/xstatsreset.ashx":
 		err = h.reset(r, body)
 	default:
 		if h.profileSettings(w, r, body) || h.xstats(w, r, body) {
 			return
 		}
-		h.log().Info("unhandled", "path", r.URL.Path, "body", hex.EncodeToString(body))
 		http.NotFound(w, r)
 		return
 	}
-	h.log().Info("xstats", "path", r.URL.Path, "users", r.Header.Get(wire.UsersHeader),
-		"body", hex.EncodeToString(body), "reply_len", len(reply), "err", err)
 	if err != nil {
 		code := http.StatusBadRequest
-		if err == errNotYours {
+		var ue upstreamErr
+		switch {
+		case err == errNotYours:
 			code = http.StatusForbidden
+		case errors.As(err, &ue):
+			code = http.StatusServiceUnavailable
+			h.log().Warn("leaderboards core", "path", r.URL.Path, "err", ue.err)
+			err = errors.New("leaderboards unavailable")
 		}
 		http.Error(w, err.Error(), code)
 		return
@@ -286,6 +248,12 @@ func (e httpErr) Error() string { return string(e) }
 
 const errNotYours = httpErr("user is not signed in on this console")
 
+// upstreamErr marks a failure of the core or the account service (answered 503).
+type upstreamErr struct{ err error }
+
+func (e upstreamErr) Error() string { return e.err.Error() }
+func (e upstreamErr) Unwrap() error { return e.err }
+
 // post is XRL 0x705: u32 title, u16 n, n x {u16 proc, u16 m, m x value}. A column
 // proc's params are XUID (7), view (3), u16 0, then (u16 column, value) pairs
 // (FUN_81935f70, FUN_819223b0).
@@ -295,13 +263,6 @@ func (h *Handler) post(r *http.Request, body []byte) error {
 	rd := &reader{b: body}
 	title := rd.u32()
 	n := int(rd.u16())
-	type write struct {
-		proc uint16
-		xuid uint64
-		view uint32
-		cols []uint16
-		vals []Value
-	}
 	var writes []write
 	for i := 0; i < n && rd.err == nil; i++ {
 		proc := rd.u16()
@@ -313,8 +274,7 @@ func (h *Handler) post(r *http.Request, body []byte) error {
 		switch proc {
 		case procLast, procSum, procMin, procMax:
 		default:
-			h.log().Info("statpost proc not served", "proc", fmt.Sprintf("%#x", proc), "params", len(ps))
-			continue
+			continue // not served: skill procs
 		}
 		if len(ps) < 3 || ps[0].Type != tU64 || ps[1].Type != tInt32 || (len(ps)-3)%2 != 0 {
 			return fmt.Errorf("xstats: proc %#x: bad params", proc)
@@ -332,44 +292,7 @@ func (h *Handler) post(r *http.Request, body []byte) error {
 	if rd.err != nil {
 		return rd.err
 	}
-	users := signedIn(r)
-	names := map[uint64]string{}
-	if h.Names != nil {
-		for _, wr := range writes {
-			if acct, ok := users[wr.xuid]; ok && acct != "" {
-				if _, done := names[wr.xuid]; !done {
-					gt, err := h.Names.Handle(r.Context(), acct)
-					if err != nil {
-						h.log().Warn("gamertag lookup", "account", acct, "err", err)
-					}
-					names[wr.xuid] = gt
-				}
-			}
-		}
-	}
-	s := h.Store
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, wr := range writes {
-		k := viewKey(title, wr.view)
-		if s.Views[k] == nil {
-			s.Views[k] = map[string]*Row{}
-		}
-		row := s.Views[k][xuidKey(wr.xuid)]
-		if row == nil {
-			s.Next++
-			row = &Row{Cols: map[uint16]Value{}, Seq: s.Next}
-			s.Views[k][xuidKey(wr.xuid)] = row
-		}
-		if gt := names[wr.xuid]; gt != "" {
-			row.Gamertag = gt
-		}
-		for i, c := range wr.cols {
-			old, have := row.Cols[c]
-			row.Cols[c] = aggregate(wr.proc, old, have, wr.vals[i])
-		}
-	}
-	return s.saveLocked()
+	return h.writeStats(r.Context(), title, signedIn(r), writes)
 }
 
 type spec struct {
@@ -400,22 +323,24 @@ func (rd *reader) specs() []spec {
 }
 
 // writeView writes {u64 view, u32 total rows, u32 n, rows}.
-func writeView(w *writer, sp spec, total int, rows []ranked, firstRank int) {
+func writeView(w *writer, sp spec, total int, rows []ranked) {
 	w.u64(uint64(sp.view))
 	w.u32(uint32(total))
 	w.u32(uint32(len(rows)))
-	for i, e := range rows {
-		writeRow(w, sp, e, firstRank+i)
+	for _, e := range rows {
+		writeRow(w, sp, e)
 	}
 }
 
 // writeRow writes {u64 xuid, u32 rank, i64 rating, u32 gamertag length, gamertag,
-// u32 columns, columns}, the columns in the spec's order (null when the row has none).
-func writeRow(w *writer, sp spec, e ranked, rank int) {
+// u32 columns, columns}, the columns in the spec's order (null when the row has none). The
+// rank is the entry's unique position, the order XAM's enumerators page by.
+func writeRow(w *writer, sp spec, e ranked) {
+	rank := int(e.e.Position)
 	w.u64(e.xuid)
 	w.u32(uint32(rank))
-	w.u64(uint64(e.row.rating()))
-	gt := e.row.Gamertag
+	w.u64(uint64(e.e.Score))
+	gt := e.e.DisplayName
 	if len(gt) > 15 {
 		gt = gt[:15]
 	}
@@ -424,12 +349,12 @@ func writeRow(w *writer, sp spec, e ranked, rank int) {
 	w.u32(uint32(len(sp.cols)))
 	for _, c := range sp.cols {
 		w.u16(c)
-		v, ok := e.row.Cols[c]
+		v, ok := e.cols[c]
 		switch {
 		case c == colRank:
 			v = Value{tInt32, uint64(uint32(rank))}
 		case c == colRating:
-			v = Value{tInt64, uint64(e.row.rating())}
+			v = Value{tInt64, uint64(e.e.Score)}
 		case !ok || c == colGamertag:
 			v = Value{}
 		}
@@ -438,40 +363,59 @@ func writeRow(w *writer, sp spec, e ranked, rank int) {
 }
 
 // read is XRL 0x703: u32 title, u32 n, u64 xuids[n], specs. Reply: u32 views.
-func (h *Handler) read(body []byte) ([]byte, error) {
+func (h *Handler) read(ctx context.Context, body []byte) ([]byte, error) {
 	rd := &reader{b: body}
 	title := rd.u32()
 	n := rd.count(8)
 	if n > 101 {
 		return nil, httpErr("xstats: too many users")
 	}
-	want := map[uint64]bool{}
+	var xuids []uint64
 	for i := 0; i < n && rd.err == nil; i++ {
-		want[rd.u64()] = true
+		xuids = append(xuids, rd.u64())
 	}
 	specs := rd.specs()
 	if rd.err != nil {
 		return nil, rd.err
 	}
-	h.Store.mu.Lock()
-	defer h.Store.mu.Unlock()
+	lb, err := h.lb()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	var accts []string
+	for _, x := range xuids {
+		a, ok, err := h.accountOf(ctx, x)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			accts = append(accts, a)
+		}
+	}
 	var w writer
 	w.u32(uint32(len(specs)))
 	for _, sp := range specs {
-		all := h.Store.sorted(title, sp.view)
-		n := 0
-		for _, e := range all {
-			if want[e.xuid] {
-				n++
+		var rows []ranked
+		var total int64
+		if len(accts) > 0 {
+			resp, err := lb.ByAccounts(ctx, &pb.ByAccountsRequest{Ref: ref(title, sp.view), Accounts: accts})
+			if err != nil {
+				return nil, up(err)
 			}
+			total = resp.Total
+			if rows, err = h.rank(ctx, resp.Entries); err != nil {
+				return nil, err
+			}
+		} else if total, err = h.total(ctx, lb, title, sp.view); err != nil {
+			return nil, err
 		}
 		w.u64(uint64(sp.view))
-		w.u32(uint32(len(all)))
-		w.u32(uint32(n))
-		for i, e := range all {
-			if want[e.xuid] {
-				writeRow(&w, sp, e, i+1)
-			}
+		w.u32(uint32(total))
+		w.u32(uint32(len(rows)))
+		for _, e := range rows {
+			writeRow(&w, sp, e)
 		}
 	}
 	return w, nil
@@ -487,7 +431,7 @@ const (
 
 // enum is XRL 0x70E/0x70D/0x70F: u32 title, u64 pivot (start rank, XUID or
 // rating), u32 rows, specs. Reply: u16 views.
-func (h *Handler) enum(body []byte, kind pivot) ([]byte, error) {
+func (h *Handler) enum(ctx context.Context, body []byte, kind pivot) ([]byte, error) {
 	rd := &reader{b: body}
 	title := rd.u32()
 	pv := rd.u64()
@@ -499,38 +443,67 @@ func (h *Handler) enum(body []byte, kind pivot) ([]byte, error) {
 	if n <= 0 || n > maxRows {
 		n = maxRows
 	}
-	h.Store.mu.Lock()
-	defer h.Store.mu.Unlock()
+	lb, err := h.lb()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	var userAcct string
+	var userKnown bool
+	if kind == byUser {
+		if userAcct, userKnown, err = h.accountOf(ctx, pv); err != nil {
+			return nil, err
+		}
+	}
 	var w writer
 	w.u16(uint16(len(specs)))
 	for _, sp := range specs {
-		all := h.Store.sorted(title, sp.view)
-		start := 0
+		total, err := h.total(ctx, lb, title, sp.view)
+		if err != nil {
+			return nil, err
+		}
+		start := int64(1) // 1-based position
 		switch kind {
 		case byRank:
 			if pv > 0 {
-				start = int(min(pv, uint64(len(all)+1))) - 1
+				start = int64(min(pv, uint64(total+1)))
 			}
 		case byUser:
-			start = len(all) // a user without a row gets an empty page
-			for i, e := range all {
-				if e.xuid == pv {
-					start = max(0, i-n/2)
-					break
+			start = total + 1 // a user without a row gets an empty page
+			if userKnown {
+				resp, err := lb.ByAccounts(ctx, &pb.ByAccountsRequest{Ref: ref(title, sp.view), Accounts: []string{userAcct}})
+				if err != nil {
+					return nil, up(err)
+				}
+				for _, e := range resp.Entries {
+					if e.Sub == 0 {
+						start = max(1, e.Position-int64(n/2))
+						break
+					}
 				}
 			}
 		case byRating:
-			start = sort.Search(len(all), func(i int) bool { return all[i].row.rating() <= int64(pv) })
+			if start, err = firstAtOrBelow(ctx, lb, title, sp.view, total, int64(pv)); err != nil {
+				return nil, err
+			}
 		}
-		end := min(len(all), start+n)
-		writeView(&w, sp, len(all), all[start:end], start+1)
+		var rows []ranked
+		if start <= total {
+			v, err := h.rangeView(ctx, lb, title, sp.view, start, n)
+			if err != nil {
+				return nil, err
+			}
+			rows = v.rows
+		}
+		writeView(&w, sp, int(total), rows)
 	}
 	return w, nil
 }
 
 // estimate is XRL 0x704: u32 title, u32 n, n x {u32 view, i64 rating}. Reply:
 // u32 n, u32 ranks[n] (1 + rows rated higher).
-func (h *Handler) estimate(body []byte) ([]byte, error) {
+func (h *Handler) estimate(ctx context.Context, body []byte) ([]byte, error) {
 	rd := &reader{b: body}
 	title := rd.u32()
 	n := rd.count(12)
@@ -548,16 +521,22 @@ func (h *Handler) estimate(body []byte) ([]byte, error) {
 	if rd.err != nil {
 		return nil, rd.err
 	}
-	h.Store.mu.Lock()
-	defer h.Store.mu.Unlock()
+	lb, err := h.lb()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	var w writer
 	w.u32(uint32(len(qs)))
 	for _, x := range qs {
-		rank := 1
-		for _, r := range h.Store.Views[viewKey(title, x.view)] {
-			if r.rating() > x.rating {
-				rank++
-			}
+		total, err := h.total(ctx, lb, title, x.view)
+		if err != nil {
+			return nil, err
+		}
+		rank, err := firstAtOrBelow(ctx, lb, title, x.view, total, x.rating)
+		if err != nil {
+			return nil, err
 		}
 		w.u32(uint32(rank))
 	}
@@ -574,17 +553,9 @@ func (h *Handler) reset(r *http.Request, body []byte) error {
 	if rd.err != nil {
 		return rd.err
 	}
-	if _, ok := signedIn(r)[xuid]; !ok {
+	acct, ok := signedIn(r)[xuid]
+	if !ok {
 		return errNotYours
 	}
-	s := h.Store
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	prefix := fmt.Sprintf("%08X/", title)
-	for k, rows := range s.Views {
-		if k == viewKey(title, view) || (view == 0 && strings.HasPrefix(k, prefix)) {
-			delete(rows, xuidKey(xuid))
-		}
-	}
-	return s.saveLocked()
+	return h.resetBoards(r.Context(), title, view, acct)
 }

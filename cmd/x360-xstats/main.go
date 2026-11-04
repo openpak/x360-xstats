@@ -49,14 +49,28 @@ func main() {
 	if u := os.Getenv("X360_XUACS_INTERNAL_URL"); u != "" {
 		h.Accounts = &xuacsapi.Client{URL: u, Key: os.Getenv("X360_XUACS_INTERNAL_KEY")}
 	}
-	if ra := os.Getenv("RANKINGS_ADDR"); ra != "" {
-		go func() {
-			rs := &http.Server{Addr: ra, Handler: httplog.Wrap(xstats.RankingsHandler("x360", store)), ReadHeaderTimeout: 5 * time.Second}
-			if err := rs.ListenAndServe(); err != nil {
-				log.Error("rankings", "err", err)
-			}
-		}()
+	// The leaderboard rows live in the neutral leaderboards core (gRPC).
+	lbAddr, lbKey := os.Getenv("X360_XSTATS_LEADERBOARDS_ADDR"), os.Getenv("X360_XSTATS_LEADERBOARDS_KEY")
+	if lbAddr == "" || lbKey == "" {
+		log.Error("X360_XSTATS_LEADERBOARDS_ADDR and X360_XSTATS_LEADERBOARDS_KEY are required")
+		os.Exit(2)
 	}
+	lb, lbConn, err := xstats.DialLeaderboards(lbAddr, lbKey)
+	if err != nil {
+		log.Error("leaderboards", "err", err)
+		os.Exit(2)
+	}
+	defer lbConn.Close()
+	h.LB = lb
+	// Rows from the pre-core store move into the core once (rows without an account stay in the document).
+	mctx, mcancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	st, err := h.MigrateLegacy(mctx)
+	mcancel()
+	if err != nil {
+		log.Error("migrate stats rows to the leaderboards core", "err", err)
+		os.Exit(1)
+	}
+	log.Info("legacy stats rows", "views", st.Views, "rows", st.Rows, "migrated", st.Migrated, "existing", st.Existing, "no_account", st.NoAccount)
 	srv := &http.Server{Addr: addr, Handler: httplog.Wrap(wire.Guard(os.Getenv("X360_GATEWAY_KEY"), h)), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -66,7 +80,7 @@ func main() {
 		defer cancel()
 		srv.Shutdown(sc)
 	}()
-	log.Info("x360-xstats listening", "addr", addr, "views", len(store.Views), "gamertags", h.Names != nil, "xuacs", h.Accounts != nil)
+	log.Info("x360-xstats listening", "addr", addr, "gamertags", h.Names != nil, "xuacs", h.Accounts != nil)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("serve", "err", err)
 		os.Exit(1)
